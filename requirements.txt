@@ -1,0 +1,23 @@
+# Core RAG / NotebookLM
+notebooklm-py[browser]>=0.4.0
+playwright>=1.44.0
+
+# LLM orchestration
+google-genai>=0.3.0
+# openai>=1.30.0   # uncomment if you prefer OpenAI for orchestration
+
+# UI
+streamlit>=1.36.0
+streamlit-extras>=0.4.0
+
+# Async + utility
+aiofiles>=23.2.1
+httpx>=0.27.0
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+loguru>=0.7.2
+tenacity>=8.3.0
+rich>=13.7.0
+
+# Audio playback / podcast handling
+pydub>=0.25.1
