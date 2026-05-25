@@ -404,6 +404,27 @@ def render_configuration_tab():
         )
         st.code(out or "(no output)", language="bash")
 
+    st.markdown("---")
+    st.subheader("Cloud auth refresh")
+    st.markdown(
+        "<div class='small-muted'>"
+        "When running on Cloud Run the NotebookLM session is stored in Secret Manager. "
+        "Google session cookies expire every few weeks — re-authenticate locally and "
+        "run the upload script to push fresh credentials."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander("Show re-auth steps"):
+        st.code(
+            "# Step 1 — authenticate locally (opens a browser)\n"
+            "notebooklm login\n\n"
+            "# Step 2 — upload the storage state to Secret Manager + redeploy\n"
+            "python scripts/upload_auth.py\n\n"
+            "# Optional: upload only, redeploy later\n"
+            "python scripts/upload_auth.py --no-redeploy",
+            language="bash",
+        )
+
     st.subheader("Agent roster")
     cols = st.columns(3)
     info = {
