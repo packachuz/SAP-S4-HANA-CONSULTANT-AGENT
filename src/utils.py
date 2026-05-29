@@ -167,19 +167,73 @@ def read_json(path: Path, default: Any = None) -> Any:
 
 
 # ----------------------------------------------------------------------------
+# Optional GCS state persistence
+# ----------------------------------------------------------------------------
+# Cloud Run's disk is ephemeral, so without a durable store the notebook
+# registry is lost on every restart and modules get re-provisioned (duplicate
+# notebooks). Set GCS_STATE_BUCKET to persist state across revisions.
+GCS_STATE_BUCKET = os.environ.get("GCS_STATE_BUCKET") or None
+REGISTRY_KEY = os.environ.get("GCS_REGISTRY_KEY", "state/notebook_registry.json")
+
+
+def _gcs_bucket():
+    """Return a google-cloud-storage Bucket, or None if unavailable."""
+    if not GCS_STATE_BUCKET:
+        return None
+    try:
+        from google.cloud import storage  # lazy import — optional dependency
+        return storage.Client().bucket(GCS_STATE_BUCKET)
+    except Exception as exc:                                # pragma: no cover
+        logger.warning(f"GCS unavailable ({exc!r}); using local state only.")
+        return None
+
+
+def upload_artifact(local_path: Path, key: str) -> Optional[str]:
+    """Best-effort upload of a local file to the state bucket. Returns gs:// URI."""
+    bucket = _gcs_bucket()
+    if bucket is None:
+        return None
+    try:
+        bucket.blob(key).upload_from_filename(str(local_path))
+        uri = f"gs://{GCS_STATE_BUCKET}/{key}"
+        logger.info(f"Uploaded {local_path.name} -> {uri}")
+        return uri
+    except Exception as exc:                                # pragma: no cover
+        logger.warning(f"Failed to upload {local_path} to GCS: {exc!r}")
+        return None
+
+
+# ----------------------------------------------------------------------------
 # Notebook registry  (module key -> notebookLM notebook id)
 # ----------------------------------------------------------------------------
 REGISTRY_PATH = DATA_DIR / "notebook_registry.json"
 
 
 def get_notebook_registry() -> Dict[str, str]:
+    bucket = _gcs_bucket()
+    if bucket is not None:
+        try:
+            blob = bucket.blob(REGISTRY_KEY)
+            if blob.exists():
+                return json.loads(blob.download_as_text()) or {}
+            return {}
+        except Exception as exc:                            # pragma: no cover
+            logger.warning(f"GCS registry read failed ({exc!r}); using local copy.")
     return read_json(REGISTRY_PATH, default={}) or {}
 
 
 def set_notebook_id(module: str, notebook_id: str) -> None:
     reg = get_notebook_registry()
     reg[module.upper()] = notebook_id
-    write_json(REGISTRY_PATH, reg)
+    write_json(REGISTRY_PATH, reg)  # always keep a local copy too
+    bucket = _gcs_bucket()
+    if bucket is not None:
+        try:
+            bucket.blob(REGISTRY_KEY).upload_from_string(
+                json.dumps(reg, indent=2), content_type="application/json"
+            )
+        except Exception as exc:                            # pragma: no cover
+            logger.warning(f"GCS registry write failed ({exc!r}); local copy kept.")
 
 
 __all__ = [
@@ -196,6 +250,7 @@ __all__ = [
     "extract_json_block",
     "write_json",
     "read_json",
+    "upload_artifact",
     "get_notebook_registry",
     "set_notebook_id",
 ]

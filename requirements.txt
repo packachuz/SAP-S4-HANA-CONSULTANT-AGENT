@@ -1,9 +1,13 @@
 # Core RAG / NotebookLM
-notebooklm-py[browser]>=0.4.0
+# Pinned to the 0.5.x line: this is an unofficial client whose API can drift
+# between minor releases, and src/notebooklm_client.py is verified against 0.5.0.
+notebooklm-py[browser]>=0.5.0,<0.6.0
 playwright>=1.44.0
 
 # LLM orchestration
 google-genai>=0.3.0
+# Optional — durable RAG state on Cloud Run (notebook registry, podcasts)
+google-cloud-storage>=2.16.0
 # openai>=1.30.0   # uncomment if you prefer OpenAI for orchestration
 
 # UI

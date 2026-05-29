@@ -14,12 +14,14 @@ import argparse
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-SECRET_NAME = "NOTEBOOKLM_STORAGE_JSON"
-SERVICE_NAME = "sap-consultant-agent"
-MOUNT_PATH = "/run/secrets/notebooklm-storage"
+# Deployment identifiers. These mirror deploy/config.sh — override via env so
+# the shell scripts and this script always agree on a single source of truth.
+SECRET_NAME = os.environ.get("SECRET_NAME", "NOTEBOOKLM_STORAGE_JSON")
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "sap-consultant-agent")
+MOUNT_PATH = os.environ.get("MOUNT_PATH", "/run/secrets/notebooklm-storage")
+DEFAULT_REGION = os.environ.get("REGION", "asia-southeast1")
 
 CANDIDATE_PATHS = [
     Path.home() / ".notebooklm" / "profiles" / "default" / "storage_state.json",
@@ -29,9 +31,14 @@ CANDIDATE_PATHS = [
 
 def _gcloud(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
     cmd = ["gcloud", *args]
-    if capture:
-        return subprocess.run(cmd, capture_output=True, text=True)
-    return subprocess.run(cmd, check=True)
+    try:
+        if capture:
+            return subprocess.run(cmd, capture_output=True, text=True)
+        return subprocess.run(cmd, check=True)
+    except FileNotFoundError:
+        print("ERROR: gcloud CLI not found. Install the Google Cloud SDK:")
+        print("  https://cloud.google.com/sdk/docs/install")
+        sys.exit(1)
 
 
 def find_storage() -> Path:
@@ -58,36 +65,34 @@ def get_project(override: str | None) -> str:
 
 
 def upload_secret(storage_path: Path, project: str) -> None:
-    content = storage_path.read_bytes()
+    size = storage_path.stat().st_size
+    data_file = str(storage_path)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as f:
-        f.write(content)
-        tmp = f.name
+    describe = _gcloud(
+        "secrets", "describe", SECRET_NAME,
+        "--project", project,
+        capture=True,
+    )
 
-    try:
-        exists = _gcloud(
-            "secrets", "describe", SECRET_NAME,
+    if describe.returncode == 0:
+        _gcloud(
+            "secrets", "versions", "add", SECRET_NAME,
+            "--data-file", data_file,
             "--project", project,
-            capture=True,
-        ).returncode == 0
-
-        if exists:
-            _gcloud(
-                "secrets", "versions", "add", SECRET_NAME,
-                "--data-file", tmp,
-                "--project", project,
-            )
-            print(f"Updated secret '{SECRET_NAME}' with new auth state ({len(content):,} bytes).")
-        else:
-            _gcloud(
-                "secrets", "create", SECRET_NAME,
-                "--data-file", tmp,
-                "--replication-policy", "automatic",
-                "--project", project,
-            )
-            print(f"Created secret '{SECRET_NAME}' ({len(content):,} bytes).")
-    finally:
-        os.unlink(tmp)
+        )
+        print(f"Updated secret '{SECRET_NAME}' with new auth state ({size:,} bytes).")
+    elif "NOT_FOUND" in describe.stderr:
+        _gcloud(
+            "secrets", "create", SECRET_NAME,
+            "--data-file", data_file,
+            "--replication-policy", "automatic",
+            "--project", project,
+        )
+        print(f"Created secret '{SECRET_NAME}' ({size:,} bytes).")
+    else:
+        print(f"ERROR: could not query secret '{SECRET_NAME}' in project '{project}'.")
+        print(describe.stderr.strip() or "(no error output from gcloud)")
+        sys.exit(1)
 
 
 def redeploy(project: str, region: str) -> None:
@@ -105,7 +110,7 @@ def redeploy(project: str, region: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project", help="GCP project ID (defaults to gcloud config)")
-    parser.add_argument("--region", default="asia-southeast1", help="Cloud Run region")
+    parser.add_argument("--region", default=DEFAULT_REGION, help="Cloud Run region")
     parser.add_argument("--no-redeploy", action="store_true", help="Upload only; skip Cloud Run redeploy")
     args = parser.parse_args()
 
@@ -120,8 +125,9 @@ def main() -> None:
     if not args.no_redeploy:
         redeploy(project, args.region)
     else:
-        print(f"\nSkipped redeploy. To apply manually:")
-        print(f"  gcloud run services update {SERVICE_NAME} --region {args.region} \\")
+        print("\nSkipped redeploy. To apply manually:")
+        print(f"  gcloud run services update {SERVICE_NAME} \\")
+        print(f"    --region {args.region} --project {project} \\")
         print(f"    --update-secrets {MOUNT_PATH}={SECRET_NAME}:latest \\")
         print(f"    --update-env-vars NOTEBOOKLM_STORAGE={MOUNT_PATH}")
 

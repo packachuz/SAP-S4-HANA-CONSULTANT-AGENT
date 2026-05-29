@@ -1,0 +1,57 @@
+name: Deploy to Cloud Run
+
+# Builds the container and deploys it to Cloud Run on every push to master,
+# or on demand. This workflow never touches the NotebookLM auth secret —
+# session cookies are uploaded manually with scripts/upload_auth.py so they
+# never pass through CI logs. Existing env vars and secret mounts are preserved
+# across deploys (we use --update-env-vars, a merge, not --set-env-vars).
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  SERVICE_NAME: sap-consultant-agent
+  REGION: asia-southeast1
+  MEMORY: 2Gi
+  CPU: "2"
+  CONCURRENCY: "4"
+  TIMEOUT: "600"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Auth via a service-account key stored in the GCP_SA_KEY secret.
+      # (Alternative: Workload Identity Federation — swap this step for
+      #  google-github-actions/auth with workload_identity_provider; see README.)
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build image
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/${SERVICE_NAME}"
+          gcloud builds submit . --tag "$IMAGE" --project "${{ secrets.GCP_PROJECT_ID }}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/${SERVICE_NAME}"
+          gcloud run deploy "$SERVICE_NAME" \
+            --image "$IMAGE" \
+            --region "$REGION" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory "$MEMORY" \
+            --cpu "$CPU" \
+            --concurrency "$CONCURRENCY" \
+            --timeout "$TIMEOUT" \
+            --update-env-vars NOTEBOOKLM_REQUIRE_LIVE=1
