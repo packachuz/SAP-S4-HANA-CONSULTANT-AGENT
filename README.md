@@ -76,6 +76,59 @@ synthesis, and a **Streamlit** dashboard.
 
 ---
 
+## Deploy to Cloud Run
+
+The app is browser-driven (Playwright/Chromium) and needs a logged-in
+NotebookLM session, so the cloud flow is: **authenticate locally → ship the
+session to Secret Manager → mount it into Cloud Run.**
+
+### First-time bring-up (one command)
+
+```bash
+notebooklm login                 # 1. authenticate locally (opens a browser)
+./scripts/deploy.sh PROJECT_ID   # 2. enable APIs, build, deploy, mount auth
+```
+
+`deploy.sh` enables the required APIs, builds the image with Cloud Build,
+deploys to Cloud Run with sensible sizing (2Gi / 2 vCPU so Chromium doesn't
+OOM into STUB), grants the runtime service account access to the auth secret,
+then calls `scripts/upload_auth.py` to push the session.
+
+Tunables (service name, region, memory, etc.) live in `deploy/config.sh` and
+can be overridden via environment variables.
+
+### Refreshing auth (cookies expire every few weeks)
+
+```bash
+notebooklm login
+python scripts/upload_auth.py    # re-upload + redeploy
+```
+
+### Automated deploys (CI/CD)
+
+`.github/workflows/deploy.yml` builds and deploys on every push to `master`.
+It never touches the auth secret (cookies stay out of CI logs). Configure two
+repository secrets:
+
+| Secret | Value |
+|--------|-------|
+| `GCP_PROJECT_ID` | your GCP project id |
+| `GCP_SA_KEY` | JSON key for a service account with Cloud Run / Cloud Build / Storage Admin roles |
+
+> Prefer **Workload Identity Federation** over a long-lived key? Replace the
+> `auth` step's `credentials_json` with `workload_identity_provider` +
+> `service_account` — see the
+> [google-github-actions/auth](https://github.com/google-github-actions/auth) docs.
+
+### Durable RAG state
+
+Cloud Run's disk is ephemeral, so set `GCS_STATE_BUCKET` (in `deploy/config.sh`
+or as an env var) to persist the notebook registry and generated podcasts to
+Cloud Storage. Without it, notebook IDs are lost on restart and modules get
+re-provisioned.
+
+---
+
 ## Dashboard tabs
 
 | Tab | What it does |

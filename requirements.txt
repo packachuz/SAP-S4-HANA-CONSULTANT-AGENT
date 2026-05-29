@@ -4,6 +4,8 @@ playwright>=1.44.0
 
 # LLM orchestration
 google-genai>=0.3.0
+# Optional — durable RAG state on Cloud Run (notebook registry, podcasts)
+google-cloud-storage>=2.16.0
 # openai>=1.30.0   # uncomment if you prefer OpenAI for orchestration
 
 # UI

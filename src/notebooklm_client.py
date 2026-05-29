@@ -21,6 +21,7 @@ from .utils import (
     PODCAST_DIR,
     get_notebook_registry,
     set_notebook_id,
+    upload_artifact,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,10 @@ class NotebookLMClientWrapper:
         self._client: Any = None
         self._connected = False
         self.stub_mode = not _REAL_AVAILABLE or os.environ.get("NOTEBOOKLM_STUB") == "1"
+        # When set (e.g. on Cloud Run), a failed live connect surfaces as an
+        # error instead of silently degrading to STUB — so a broken deploy is
+        # visible rather than quietly serving placeholder data.
+        self.require_live = os.environ.get("NOTEBOOKLM_REQUIRE_LIVE") == "1"
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # ----------------------------- session lifecycle -----------------------
@@ -111,6 +116,16 @@ class NotebookLMClientWrapper:
             logger.info("NotebookLM client initialized and context entered.")
             return True
         except Exception as exc:
+            if self.require_live:
+                logger.error(
+                    f"NotebookLM connect failed: {exc!r}. NOTEBOOKLM_REQUIRE_LIVE is "
+                    "set, so NOT falling back to STUB. Check that the auth secret is "
+                    "mounted (NOTEBOOKLM_STORAGE) and the session has not expired."
+                )
+                self._connected = False
+                self._client = None
+                self._loop = None
+                return False
             logger.warning(f"NotebookLM connect failed: {exc!r}. Falling back to STUB mode.")
             self.stub_mode = True
             self._connected = True
@@ -347,6 +362,8 @@ class NotebookLMClientWrapper:
             notebook_id=nb_id,
             output_path=str(out_path),
         )
+        # Persist to durable storage if configured (Cloud Run disk is ephemeral).
+        upload_artifact(out_path, f"podcasts/{module.upper()}/{out_path.name}")
         return PodcastResult(file_path=out_path, title=title)
 
 

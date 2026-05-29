@@ -11,13 +11,17 @@ script to push it to Secret Manager so Cloud Run can use it.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-SECRET_NAME = "NOTEBOOKLM_STORAGE_JSON"
-SERVICE_NAME = "sap-consultant-agent"
-MOUNT_PATH = "/run/secrets/notebooklm-storage"
+# Deployment identifiers. These mirror deploy/config.sh — override via env so
+# the shell scripts and this script always agree on a single source of truth.
+SECRET_NAME = os.environ.get("SECRET_NAME", "NOTEBOOKLM_STORAGE_JSON")
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "sap-consultant-agent")
+MOUNT_PATH = os.environ.get("MOUNT_PATH", "/run/secrets/notebooklm-storage")
+DEFAULT_REGION = os.environ.get("REGION", "asia-southeast1")
 
 CANDIDATE_PATHS = [
     Path.home() / ".notebooklm" / "profiles" / "default" / "storage_state.json",
@@ -106,7 +110,7 @@ def redeploy(project: str, region: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project", help="GCP project ID (defaults to gcloud config)")
-    parser.add_argument("--region", default="asia-southeast1", help="Cloud Run region")
+    parser.add_argument("--region", default=DEFAULT_REGION, help="Cloud Run region")
     parser.add_argument("--no-redeploy", action="store_true", help="Upload only; skip Cloud Run redeploy")
     args = parser.parse_args()
 
